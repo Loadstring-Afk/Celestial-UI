@@ -1,0 +1,418 @@
+-- Dynamic Island-style UI toggle with fluid animations
+
+local ToggleIsland = {}
+ToggleIsland.__index = ToggleIsland
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+
+function ToggleIsland.new(options)
+    local self = setmetatable({}, ToggleIsland)
+    
+    self.Window = options.Window
+    self.Config = options.Config
+    self.IsVisible = false
+    self.Notifications = {}
+    self.Dragging = false
+    self.DragStart = nil
+    self.StartPosition = nil
+    
+    self:_createUI()
+    self:_setupEvents()
+    self:_applyConfig()
+    
+    return self
+end
+
+function ToggleIsland:_createUI()
+    local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
+    
+    -- Main container
+    self.Container = Instance.new("ScreenGui")
+    self.Container.Name = "CelestialDynamicIsland"
+    self.Container.ResetOnSpawn = false
+    self.Container.ZIndexBehavior = Enum.ZIndexBehavior.Global
+    self.Container.IgnoreGuiInset = true
+    self.Container.Parent = playerGui
+    
+    -- Island frame
+    self.Island = Instance.new("Frame")
+    self.Island.Name = "Island"
+    self.Island.BackgroundColor3 = self.Config.BackgroundColor
+    self.Island.BackgroundTransparency = 0.1
+    self.Island.Size = self.Config.Size
+    self.Island.Position = self:_getInitialPosition()
+    self.Island.AnchorPoint = Vector2.new(0.5, 0)
+    self.Island.ZIndex = 10000
+    
+    -- Rounded corners
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(1, 0)
+    corner.Parent = self.Island
+    
+    -- Shadow
+    local shadow = Instance.new("UIStroke")
+    shadow.Color = Color3.new(0, 0, 0)
+    shadow.Transparency = 0.7
+    shadow.Thickness = 2
+    shadow.Parent = self.Island
+    
+    -- Blur effect
+    local blur = Instance.new("BlurEffect")
+    blur.Size = 0
+    blur.Parent = self.Island
+    
+    -- Content container
+    self.Content = Instance.new("Frame")
+    self.Content.Name = "Content"
+    self.Content.BackgroundTransparency = 1
+    self.Content.Size = UDim2.new(1, 0, 1, 0)
+    self.Content.Parent = self.Island
+    
+    -- Icon
+    self.Icon = Instance.new("ImageLabel")
+    self.Icon.Name = "Icon"
+    self.Icon.BackgroundTransparency = 1
+    self.Icon.Size = UDim2.new(0, 24, 0, 24)
+    self.Icon.Position = UDim2.new(0.5, -12, 0.5, -12)
+    self.Icon.AnchorPoint = Vector2.new(0.5, 0.5)
+    self.Icon.Image = self:_getIcon(self.Config.Icon)
+    self.Icon.ImageColor3 = self.Config.TextColor
+    self.Icon.Parent = self.Content
+    
+    -- Text container (hidden by default)
+    self.TextContainer = Instance.new("Frame")
+    self.TextContainer.Name = "TextContainer"
+    self.TextContainer.BackgroundTransparency = 1
+    self.TextContainer.Size = UDim2.new(0, 0, 1, 0)
+    self.TextContainer.Position = UDim2.new(0, 40, 0, 0)
+    self.TextContainer.ClipsDescendants = true
+    self.TextContainer.Parent = self.Content
+    
+    self.Title = Instance.new("TextLabel")
+    self.Title.Name = "Title"
+    self.Title.BackgroundTransparency = 1
+    self.Title.Size = UDim2.new(1, 0, 0.6, 0)
+    self.Title.Position = UDim2.new(0, 0, 0, 0)
+    self.Title.Font = Enum.Font.Gotham
+    self.Title.Text = self.Window.Config.Name or "Celestial UI"
+    self.Title.TextColor3 = self.Config.TextColor
+    self.Title.TextSize = 14
+    self.Title.TextXAlignment = Enum.TextXAlignment.Left
+    self.Title.Visible = false
+    self.Title.Parent = self.TextContainer
+    
+    self.Subtitle = Instance.new("TextLabel")
+    self.Subtitle.Name = "Subtitle"
+    self.Subtitle.BackgroundTransparency = 1
+    self.Subtitle.Size = UDim2.new(1, 0, 0.4, 0)
+    self.Subtitle.Position = UDim2.new(0, 0, 0.6, 0)
+    self.Subtitle.Font = Enum.Font.Gotham
+    self.Subtitle.Text = "Tap to toggle"
+    self.Subtitle.TextColor3 = self.Config.TextColor
+    self.Subtitle.TextTransparency = 0.3
+    self.Subtitle.TextSize = 12
+    self.Subtitle.TextXAlignment = Enum.TextXAlignment.Left
+    self.Subtitle.Visible = false
+    self.Subtitle.Parent = self.TextContainer
+    
+    -- Notification badge
+    self.Badge = Instance.new("Frame")
+    self.Badge.Name = "Badge"
+    self.Badge.BackgroundColor3 = Color3.fromRGB(255, 60, 60)
+    self.Badge.Size = UDim2.new(0, 8, 0, 8)
+    self.Badge.Position = UDim2.new(1, -4, 0, 4)
+    self.Badge.AnchorPoint = Vector2.new(1, 0)
+    self.Badge.Visible = false
+    
+    local badgeCorner = Instance.new("UICorner")
+    badgeCorner.CornerRadius = UDim.new(1, 0)
+    badgeCorner.Parent = self.Badge
+    
+    self.Badge.Parent = self.Island
+    
+    self.Island.Parent = self.Container
+end
+
+function ToggleIsland:_setupEvents()
+    -- Input detection
+    self.Island.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or 
+           input.UserInputType == Enum.UserInputType.Touch then
+            self:_onInputBegan(input)
+        elseif input.UserInputType == Enum.UserInputType.MouseMovement then
+            if self.Config.ExpandOnHover then
+                self:_expand()
+            end
+        end
+    end)
+    
+    self.Island.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or 
+           input.UserInputType == Enum.UserInputType.Touch then
+            self:_onInputEnded(input)
+        elseif input.UserInputType == Enum.UserInputType.MouseMovement then
+            if self.Config.ExpandOnHover then
+                task.wait(0.5)
+                self:_collapse()
+            end
+        end
+    end)
+    
+    -- Drag handling
+    UserInputService.InputChanged:Connect(function(input)
+        if self.Dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or 
+           input.UserInputType == Enum.UserInputType.Touch) then
+            self:_handleDrag(input)
+        end
+    end)
+    
+    -- Double click/tap detection
+    local lastClickTime = 0
+    self.Island.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or 
+           input.UserInputType == Enum.UserInputType.Touch then
+            local currentTime = tick()
+            if currentTime - lastClickTime < 0.3 then
+                -- Double click/tap - toggle UI
+                self:_toggleUI()
+            end
+            lastClickTime = currentTime
+        end
+    end)
+end
+
+function ToggleIsland:_onInputBegan(input)
+    self.Dragging = true
+    self.DragStart = input.Position
+    self.StartPosition = self.Island.Position
+    
+    -- Visual feedback
+    self.Animations:Animate(self.Island, {
+        BackgroundTransparency = 0.05,
+        Size = self.Config.Size * UDim2.new(1.05, 0, 1.05, 0)
+    }, {
+        Style = "Spring",
+        Duration = 0.2
+    })
+end
+
+function ToggleIsland:_onInputEnded(input)
+    self.Dragging = false
+    
+    -- Check if it was a tap (minimal movement)
+    local dragDistance = (input.Position - self.DragStart).Magnitude
+    if dragDistance < 10 then
+        self:_toggleUI()
+    end
+    
+    -- Animate back
+    self.Animations:Animate(self.Island, {
+        BackgroundTransparency = 0.1,
+        Size = self.Config.Size
+    }, {
+        Style = "Spring",
+        Duration = 0.2
+    })
+end
+
+function ToggleIsland:_handleDrag(input)
+    local delta = input.Position - self.DragStart
+    local newPosition = UDim2.new(
+        self.StartPosition.X.Scale,
+        self.StartPosition.X.Offset + delta.X,
+        self.StartPosition.Y.Scale,
+        self.StartPosition.Y.Offset + delta.Y
+    )
+    
+    -- Keep within screen bounds
+    local viewportSize = workspace.CurrentCamera.ViewportSize
+    local islandSize = self.Island.AbsoluteSize
+    
+    newPosition = UDim2.new(
+        math.clamp(newPosition.X.Scale, 0, 1),
+        math.clamp(newPosition.X.Offset, 0, viewportSize.X - islandSize.X),
+        math.clamp(newPosition.Y.Scale, 0, 1),
+        math.clamp(newPosition.Y.Offset, 0, viewportSize.Y - islandSize.Y)
+    )
+    
+    self.Island.Position = newPosition
+end
+
+function ToggleIsland:_toggleUI()
+    self.IsVisible = not self.IsVisible
+    
+    if self.IsVisible then
+        self.Window:Show()
+    else
+        self.Window:Hide()
+    end
+    
+    -- Visual feedback
+    self:_pulse()
+end
+
+function ToggleIsland:_expand()
+    if self.Expanded then return end
+    self.Expanded = true
+    
+    -- Animate expansion
+    self.Animations:Animate(self.Island, {
+        Size = UDim2.new(self.Config.Size.X.Scale * 1.5, 0, self.Config.Size.Y.Scale, 0)
+    }, {
+        Style = "Fluid",
+        Duration = 0.3
+    })
+    
+    -- Show text
+    self.Animations:Animate(self.TextContainer, {
+        Size = UDim2.new(0, 120, 1, 0)
+    }, {
+        Style = "Fluid",
+        Duration = 0.3
+    })
+    
+    self.Title.Visible = true
+    self.Subtitle.Visible = true
+end
+
+function ToggleIsland:_collapse()
+    if not self.Expanded then return end
+    self.Expanded = false
+    
+    -- Animate collapse
+    self.Animations:Animate(self.Island, {
+        Size = self.Config.Size
+    }, {
+        Style = "Fluid",
+        Duration = 0.3
+    })
+    
+    -- Hide text
+    self.Animations:Animate(self.TextContainer, {
+        Size = UDim2.new(0, 0, 1, 0)
+    }, {
+        Style = "Fluid",
+        Duration = 0.3
+    })
+    
+    task.delay(0.3, function()
+        self.Title.Visible = false
+        self.Subtitle.Visible = false
+    end)
+end
+
+function ToggleIsland:_pulse()
+    -- Create ripple effect
+    local ripple = Instance.new("Frame")
+    ripple.Name = "PulseRipple"
+    ripple.BackgroundTransparency = 1
+    ripple.Size = UDim2.new(1, 0, 1, 0)
+    ripple.Position = UDim2.new(0, 0, 0, 0)
+    ripple.ZIndex = -1
+    
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = self.Config.TextColor
+    stroke.Transparency = 0.8
+    stroke.Thickness = 2
+    stroke.Parent = ripple
+    
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(1, 0)
+    corner.Parent = ripple
+    
+    ripple.Parent = self.Island
+    
+    -- Animate ripple
+    self.Animations:Animate(ripple, {
+        Size = UDim2.new(1.5, 0, 1.5, 0),
+        BackgroundTransparency = 1,
+        Position = UDim2.new(-0.25, 0, -0.25, 0)
+    }, {
+        Style = "Wave",
+        Duration = 0.5
+    })
+    
+    -- Cleanup
+    task.delay(0.6, function()
+        if ripple then
+            ripple:Destroy()
+        end
+    end)
+end
+
+function ToggleIsland:_getInitialPosition()
+    local position = self.Config.Position or "Top"
+    local viewportSize = workspace.CurrentCamera.ViewportSize
+    
+    if position == "Top" then
+        return UDim2.new(0.5, 0, 0.02, 0)
+    elseif position == "Bottom" then
+        return UDim2.new(0.5, 0, 0.98, 0)
+    elseif position == "Left" then
+        return UDim2.new(0.02, 0, 0.5, 0)
+    elseif position == "Right" then
+        return UDim2.new(0.98, 0, 0.5, 0)
+    else
+        -- Custom position
+        return UDim2.new(0.5, 0, 0.02, 0)
+    end
+end
+
+function ToggleIsland:_getIcon(iconName)
+    -- Icon system integration
+    -- This would connect to the icon system module
+    if iconName:find("lucide:") then
+        return "rbxassetid://" -- Lucide icons
+    elseif iconName:find("feather:") then
+        return "rbxassetid://" -- Feather icons
+    else
+        return iconName -- Custom URL or Roblox asset
+    end
+end
+
+function ToggleIsland:ShowNotification(message, duration)
+    if not self.Config.ShowNotifications then return end
+    
+    local notification = {
+        Message = message,
+        Time = tick(),
+        Duration = duration or 3
+    }
+    
+    table.insert(self.Notifications, notification)
+    self.Badge.Visible = true
+    
+    -- Update subtitle with notification
+    self.Subtitle.Text = message
+    
+    -- Auto-remove
+    task.delay(duration or 3, function()
+        for i, notif in ipairs(self.Notifications) do
+            if notif == notification then
+                table.remove(self.Notifications, i)
+                break
+            end
+        end
+        
+        if #self.Notifications == 0 then
+            self.Badge.Visible = false
+            self.Subtitle.Text = "Tap to toggle"
+        end
+    end)
+end
+
+function ToggleIsland:SetPosition(position)
+    self.Config.Position = position
+    self.Island.Position = self:_getInitialPosition()
+end
+
+function ToggleIsland:Destroy()
+    if self.Container then
+        self.Container:Destroy()
+    end
+end
+
+return ToggleIsland
